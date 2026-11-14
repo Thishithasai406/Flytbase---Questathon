@@ -246,6 +246,27 @@ app.get("/api/mcp/tools", async (req, res) => {
   }
 });
 
+// ---------------- FETCH LIVE ACCOUNTS ----------------
+
+app.post("/api/mcp/accounts", async (req, res) => {
+  try {
+    const result = await callTool("get_my_accounts");
+
+    saveData("accounts_live.json", result);
+
+    res.json({
+      success: true,
+      source: "Questathon MCP",
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 // ---------------- MCP IDENTITY ----------------
 
 app.post("/api/mcp/whoami", async (req, res) => {

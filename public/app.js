@@ -1,3 +1,4 @@
+
 const $ = (id) => document.getElementById(id);
 
 let accountsData = null;
@@ -289,10 +290,21 @@ function showView(view) {
   $("viewTitle").textContent = title;
 }
 
+// UPDATED: Generate tabs from all accounts returned by the backend.
 function renderAccountTabs() {
-  document.querySelectorAll(".account-tab").forEach((button) => {
-    button.classList.toggle("active", button.dataset.account === selectedAccountId);
-  });
+  const container = $("accountTabs");
+
+  if (!container || !accountsData?.accounts) return;
+
+  container.innerHTML = accountsData.accounts.map((account) => `
+    <button
+      class="account-tab ${String(account.id) === selectedAccountId ? "active" : ""}"
+      type="button"
+      data-account="${escapeHTML(account.id)}"
+    >
+      ${escapeHTML(account.name || `Account ${account.id}`)}
+    </button>
+  `).join("");
 }
 
 function renderBrief(account) {
@@ -579,12 +591,14 @@ function renderNotes() {
 
 function renderAccount() {
   const account = getSelectedAccount();
+
   if (!account) {
     $("accountSummary").textContent = "That account is not in the saved record.";
     return;
   }
 
   renderAccountTabs();
+
   $("accountSummary").textContent =
     `Recorded story, not a valuation: ${account.official_story || "No story on the record."}`;
 
@@ -686,6 +700,15 @@ async function loadInitialData() {
   signalsData = signalsResponse.ok ? await signalsResponse.json() : { signals: [] };
   notesData = notesResponse.ok ? await notesResponse.json() : { notes: [] };
 
+  // Keep A selected if available; otherwise select the first account.
+  const accountExists = accountsData.accounts?.some(
+    account => String(account.id) === selectedAccountId
+  );
+
+  if (!accountExists && accountsData.accounts?.length) {
+    selectedAccountId = String(accountsData.accounts[0].id);
+  }
+
   renderAccount();
   renderSignals();
   showView("brief");
@@ -710,12 +733,15 @@ document.querySelector(".main").addEventListener("click", (event) => {
   else showCite(source.dataset.source);
 });
 
-document.querySelectorAll(".account-tab").forEach((button) => {
-  button.addEventListener("click", () => {
-    selectedAccountId = button.dataset.account;
-    $("citeBar").hidden = true;
-    renderAccount();
-  });
+// UPDATED: Delegated listener works for dynamically generated account tabs.
+$("accountTabs").addEventListener("click", (event) => {
+  const button = event.target.closest(".account-tab");
+
+  if (!button) return;
+
+  selectedAccountId = button.dataset.account;
+  $("citeBar").hidden = true;
+  renderAccount();
 });
 
 $("refreshBtn").addEventListener("click", () => refreshSignals(false));
@@ -738,8 +764,10 @@ $("noteForm").addEventListener("submit", async (event) => {
         text: data.get("text")
       })
     });
+
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Note was not saved");
+
     notesData = payload;
     form.reset();
     status.textContent = "Note written back.";
@@ -750,7 +778,8 @@ $("noteForm").addEventListener("submit", async (event) => {
 });
 
 loadInitialData().catch((error) => {
-  $("accountSummary").innerHTML = `<span class="error">${escapeHTML(error.message)}</span>`;
+  $("accountSummary").innerHTML =
+    `<span class="error">${escapeHTML(error.message)}</span>`;
 });
 
 signalTimer = window.setInterval(() => refreshSignals(true), 70000);

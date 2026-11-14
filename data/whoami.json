@@ -1,0 +1,44 @@
+{
+  "player_id": "9b5b5b9c-95b7-45bc-b2c1-5fcb6172671e",
+  "your_morning_over": true,
+  "new_accounts": [
+    {
+      "id": "K",
+      "name": "Kestrel Estates",
+      "path": "/drops/K"
+    }
+  ],
+  "pack": [
+    {
+      "account": "A",
+      "open": true
+    },
+    {
+      "account": "B",
+      "open": true
+    },
+    {
+      "account": "K",
+      "open": true
+    }
+  ],
+  "signals": 3,
+  "paths": [
+    "/me",
+    "/export",
+    "/files/:id",
+    "/pack",
+    "/pack/team",
+    "/pack/:account",
+    "/pack/:account/all",
+    "/pack/:account/<path>",
+    "/pack/search?q=",
+    "/pack/feature-requests",
+    "/pack/release-notes",
+    "/signals",
+    "/schema",
+    "/notes (GET, POST)",
+    "/drops/:id",
+    "/drops/:id/files/:fileId"
+  ]
+}

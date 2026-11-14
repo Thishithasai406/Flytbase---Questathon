@@ -19,9 +19,15 @@ const MCP_URL =
 const DATA_DIR = path.join(__dirname, "../data");
 const FILES_DIR = path.join(DATA_DIR, "files");
 
+fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(FILES_DIR, { recursive: true });
 
+// MCP allows one call per minute per token.
 let nextMcpCallAt = 0;
+
+// Automatic account discovery state.
+let pendingAccountIds = [];
+let autoDiscoveryBusy = false;
 
 // ---------------- MCP HELPER ----------------
 
@@ -34,7 +40,10 @@ async function callTool(name, args = {}) {
 
   if (now < nextMcpCallAt) {
     const seconds = Math.ceil((nextMcpCallAt - now) / 1000);
-    throw new Error(`One MCP call a minute. Try again in ${seconds}s.`);
+
+    throw new Error(
+      `One MCP call a minute. Try again in ${seconds}s.`
+    );
   }
 
   nextMcpCallAt = now + 60_000;
@@ -113,10 +122,159 @@ function saveData(filename, data) {
   );
 }
 
+// ---------------- ACCOUNT HELPERS ----------------
+
+function isValidAccountId(id) {
+  return /^[A-Za-z0-9_-]+$/.test(String(id || ""));
+}
+
+function getSavedAdditionalAccountIds() {
+  const savedIds = new Set();
+
+  const filenames = fs.readdirSync(DATA_DIR).filter(file =>
+    /^account_[A-Za-z0-9_-]+\.json$/.test(file)
+  );
+
+  for (const filename of filenames) {
+    try {
+      const accountExport = readJSON(filename);
+
+      const accounts = accountExport?.accounts || [];
+
+      for (const account of accounts) {
+        if (account?.id) {
+          savedIds.add(String(account.id));
+        }
+      }
+    } catch (error) {
+      console.error(
+        `Could not read ${filename}:`,
+        error.message
+      );
+    }
+  }
+
+  return savedIds;
+}
+
+// Add newly released accounts to the pending queue.
+function queueNewAccounts(identity) {
+  const newAccounts = identity?.new_accounts || [];
+
+  if (!Array.isArray(newAccounts)) {
+    return 0;
+  }
+
+  const savedIds = getSavedAdditionalAccountIds();
+
+  let added = 0;
+
+  for (const item of newAccounts) {
+    const accountId = String(item?.id || "").trim();
+
+    if (!isValidAccountId(accountId)) {
+      continue;
+    }
+
+    if (savedIds.has(accountId)) {
+      continue;
+    }
+
+    if (pendingAccountIds.includes(accountId)) {
+      continue;
+    }
+
+    pendingAccountIds.push(accountId);
+    added++;
+  }
+
+  return added;
+}
+
+// ---------------- AUTOMATIC ACCOUNT DISCOVERY ----------------
+
+async function runAutoDiscovery() {
+  if (autoDiscoveryBusy || !process.env.AQ_TOKEN) {
+    return;
+  }
+
+  autoDiscoveryBusy = true;
+
+  try {
+    // Fetch one pending account per MCP call.
+    if (pendingAccountIds.length > 0) {
+      const accountId = pendingAccountIds.shift();
+
+      try {
+        console.log(
+          `[AUTO DISCOVERY] Fetching account ${accountId}`
+        );
+
+        const result = await callTool("get_new_account", {
+          account: accountId,
+        });
+
+        const accounts = result?.accounts || [];
+
+        const matchingAccount = accounts.find(
+          account =>
+            String(account?.id) === accountId
+        );
+
+        if (!matchingAccount) {
+          throw new Error(
+            `MCP export did not contain account ${accountId}`
+          );
+        }
+
+        saveData(`account_${accountId}.json`, result);
+
+        console.log(
+          `[AUTO DISCOVERY] Account ${accountId} saved successfully`
+        );
+
+      } catch (error) {
+        // Retry on the next discovery cycle.
+        if (!pendingAccountIds.includes(accountId)) {
+          pendingAccountIds.unshift(accountId);
+        }
+
+        console.error(
+          `[AUTO DISCOVERY] Account ${accountId} failed:`,
+          error.message
+        );
+      }
+
+      return;
+    }
+
+    // No pending account: discover newly released accounts.
+    console.log("[AUTO DISCOVERY] Checking for new accounts...");
+
+    const identity = await callTool("whoami");
+
+    saveData("whoami.json", identity);
+
+    const added = queueNewAccounts(identity);
+
+    console.log(
+      `[AUTO DISCOVERY] Found ${added} new account(s) to fetch`
+    );
+
+  } catch (error) {
+    console.error(
+      "[AUTO DISCOVERY] Discovery failed:",
+      error.message
+    );
+  } finally {
+    autoDiscoveryBusy = false;
+  }
+}
+
 // ---------------- DASHBOARD DATA ----------------
 
 function getDashboardData() {
-  // Prefer Questathon MCP export for A and B
+  // Prefer Questathon MCP export for A and B.
   const live = readJSON("accounts_live.json");
   const base = live || readJSON("accounts.json");
 
@@ -130,49 +288,66 @@ function getDashboardData() {
     files: [...(base.files || [])],
   };
 
-  // Load all additional fetched accounts: K and H
-  const additionalAccounts = ["K", "H"];
+  // Load every saved additional account automatically.
+  const accountFiles = fs.readdirSync(DATA_DIR).filter(file =>
+    /^account_[A-Za-z0-9_-]+\.json$/.test(file)
+  );
 
-  for (const accountId of additionalAccounts) {
-    const accountExport = readJSON(`account_${accountId}.json`);
+  for (const filename of accountFiles) {
+    try {
+      const accountExport = readJSON(filename);
 
-    if (!accountExport) {
-      continue;
-    }
+      if (!accountExport) {
+        continue;
+      }
 
-    // Find the account in its saved export
-    const accountData = (accountExport.accounts || []).find(
-      account => String(account.id) === accountId
-    );
+      const accounts = accountExport.accounts || [];
 
-    if (accountData) {
-      // Avoid duplicate accounts
-      result.accounts = result.accounts.filter(
-        account => String(account.id) !== accountId
+      for (const accountData of accounts) {
+        if (!accountData?.id) {
+          continue;
+        }
+
+        const accountId = String(accountData.id);
+
+        // Avoid duplicate accounts.
+        result.accounts = result.accounts.filter(
+          account =>
+            String(account.id) !== accountId
+        );
+
+        result.accounts.push(accountData);
+      }
+
+      // Merge evidence file metadata.
+      const accountId = filename
+        .replace(/^account_/, "")
+        .replace(/\.json$/, "");
+
+      const accountFilesData = (
+        accountExport.files || []
+      ).map(file => ({
+        ...file,
+        account: accountId,
+        title: file.title || file.name || file.id,
+      }));
+
+      const existingFileIds = new Set(
+        result.files.map(file => file.id)
       );
 
-      result.accounts.push({
-        ...accountData,
-        id: accountId,
-      });
-    }
-
-    // Merge evidence file metadata
-    const accountFiles = (accountExport.files || []).map(file => ({
-      ...file,
-      account: accountId,
-      title: file.title || file.name || file.id,
-    }));
-
-    const existingFileIds = new Set(
-      result.files.map(file => file.id)
-    );
-
-    for (const file of accountFiles) {
-      if (file.id && !existingFileIds.has(file.id)) {
-        result.files.push(file);
-        existingFileIds.add(file.id);
+      for (const file of accountFilesData) {
+        if (file.id && !existingFileIds.has(file.id)) {
+          result.files.push(file);
+          existingFileIds.add(file.id);
+        }
       }
+
+    } catch (error) {
+      console.error(
+        `[DASHBOARD] Could not load ${filename}:`,
+        error.message
+      );
     }
   }
 
@@ -182,7 +357,9 @@ function getDashboardData() {
 // ---------------- DASHBOARD ----------------
 
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "../public/index.html"));
+  res.sendFile(
+    path.join(__dirname, "../public/index.html")
+  );
 });
 
 // ---------------- HEALTH ----------------
@@ -205,7 +382,9 @@ app.get("/api/mcp/tools", async (req, res) => {
     const now = Date.now();
 
     if (now < nextMcpCallAt) {
-      const seconds = Math.ceil((nextMcpCallAt - now) / 1000);
+      const seconds = Math.ceil(
+        (nextMcpCallAt - now) / 1000
+      );
 
       return res.status(429).json({
         error: `Wait ${seconds}s before the next MCP call`,
@@ -248,6 +427,7 @@ app.get("/api/mcp/tools", async (req, res) => {
         inputSchema: tool.inputSchema,
       })),
     });
+
   } catch (error) {
     res.status(500).json({
       error: error.message,
@@ -268,6 +448,7 @@ app.post("/api/mcp/accounts", async (req, res) => {
       source: "Questathon MCP",
       data: result,
     });
+
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -284,10 +465,15 @@ app.post("/api/mcp/whoami", async (req, res) => {
 
     saveData("whoami.json", result);
 
+    // Automatically queue accounts discovered by this request.
+    const queued = queueNewAccounts(result);
+
     res.json({
       success: true,
       data: result,
+      queued_accounts: queued,
     });
+
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -301,13 +487,28 @@ app.post("/api/mcp/whoami", async (req, res) => {
 app.post("/api/mcp/new-account", async (req, res) => {
   try {
     const account = String(req.body?.account || "")
-      .trim()
-      .toUpperCase();
+      .trim();
 
-    if (!["K", "H"].includes(account)) {
+    if (!isValidAccountId(account)) {
       return res.status(400).json({
         success: false,
-        error: "Invalid account. Expected K or H.",
+        error: "Invalid account ID.",
+      });
+    }
+
+    // Only fetch accounts released to this player.
+    const identity = readJSON("whoami.json");
+
+    const availableAccounts = identity?.new_accounts || [];
+
+    const isAvailable = availableAccounts.some(
+      item => String(item?.id) === account
+    );
+
+    if (!isAvailable) {
+      return res.status(400).json({
+        success: false,
+        error: "Account is not listed in whoami.new_accounts. Refresh identity first.",
       });
     }
 
@@ -315,7 +516,22 @@ app.post("/api/mcp/new-account", async (req, res) => {
       account,
     });
 
+    const matchingAccount = (result?.accounts || []).find(
+      item => String(item?.id) === account
+    );
+
+    if (!matchingAccount) {
+      throw new Error(
+        `MCP export did not contain account ${account}`
+      );
+    }
+
     saveData(`account_${account}.json`, result);
+
+    // Remove it from the automatic queue if already queued.
+    pendingAccountIds = pendingAccountIds.filter(
+      id => id !== account
+    );
 
     res.json({
       success: true,
@@ -323,6 +539,7 @@ app.post("/api/mcp/new-account", async (req, res) => {
       account,
       data: result,
     });
+
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -336,7 +553,9 @@ app.post("/api/mcp/new-account", async (req, res) => {
 app.get("/api/accounts", (req, res) => {
   try {
     const accounts = getDashboardData();
+
     res.json(accounts);
+
   } catch (error) {
     res.status(500).json({
       error: error.message,
@@ -370,6 +589,7 @@ app.post("/api/signals/refresh", async (req, res) => {
       success: true,
       data: signals,
     });
+
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -381,9 +601,11 @@ app.post("/api/signals/refresh", async (req, res) => {
 // ---------------- NOTES ----------------
 
 app.get("/api/notes", (req, res) => {
-  res.json(readJSON("notes.json") || {
-    notes: [],
-  });
+  res.json(
+    readJSON("notes.json") || {
+      notes: [],
+    }
+  );
 });
 
 app.post("/api/notes", async (req, res) => {
@@ -435,6 +657,7 @@ app.post("/api/notes", async (req, res) => {
       success: true,
       data: store,
     });
+
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -458,6 +681,7 @@ app.get("/api/evidence/:id", (req, res) => {
 
   try {
     dashboardData = getDashboardData();
+
   } catch (error) {
     return res.status(500).json({
       error: error.message,
@@ -474,7 +698,10 @@ app.get("/api/evidence/:id", (req, res) => {
     });
   }
 
-  const filePath = path.join(FILES_DIR, `${id}.txt`);
+  const filePath = path.join(
+    FILES_DIR,
+    `${id}.txt`
+  );
 
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({
@@ -493,4 +720,15 @@ const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
   console.log(`CRM running at http://localhost:${PORT}`);
+
+  // First automatic identity check after startup.
+  setTimeout(() => {
+    runAutoDiscovery();
+  }, 15_000);
+
+  // Repeat discovery every 65 seconds.
+  // One MCP call per cycle, maximum.
+  setInterval(() => {
+    runAutoDiscovery();
+  }, 65_000);
 });

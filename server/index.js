@@ -22,11 +22,11 @@ const FILES_DIR = path.join(DATA_DIR, "files");
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(FILES_DIR, { recursive: true });
 
-// MCP allows one call per minute per token.
+// One MCP call per minute per token.
 let nextMcpCallAt = 0;
 
-// Automatic account discovery state.
 let pendingAccountIds = [];
+let pendingEvidenceFiles = [];
 let autoDiscoveryBusy = false;
 
 // ---------------- MCP HELPER ----------------
@@ -39,7 +39,9 @@ async function callTool(name, args = {}) {
   const now = Date.now();
 
   if (now < nextMcpCallAt) {
-    const seconds = Math.ceil((nextMcpCallAt - now) / 1000);
+    const seconds = Math.ceil(
+      (nextMcpCallAt - now) / 1000
+    );
 
     throw new Error(
       `One MCP call a minute. Try again in ${seconds}s.`
@@ -122,11 +124,15 @@ function saveData(filename, data) {
   );
 }
 
-// ---------------- ACCOUNT HELPERS ----------------
-
 function isValidAccountId(id) {
   return /^[A-Za-z0-9_-]+$/.test(String(id || ""));
 }
+
+function isValidFileId(id) {
+  return /^[A-Za-z0-9_-]+$/.test(String(id || ""));
+}
+
+// ---------------- ACCOUNT HELPERS ----------------
 
 function getSavedAdditionalAccountIds() {
   const savedIds = new Set();
@@ -139,16 +145,14 @@ function getSavedAdditionalAccountIds() {
     try {
       const accountExport = readJSON(filename);
 
-      const accounts = accountExport?.accounts || [];
-
-      for (const account of accounts) {
+      for (const account of accountExport?.accounts || []) {
         if (account?.id) {
           savedIds.add(String(account.id));
         }
       }
     } catch (error) {
       console.error(
-        `Could not read ${filename}:`,
+        `[ACCOUNT] Could not read ${filename}:`,
         error.message
       );
     }
@@ -157,7 +161,6 @@ function getSavedAdditionalAccountIds() {
   return savedIds;
 }
 
-// Add newly released accounts to the pending queue.
 function queueNewAccounts(identity) {
   const newAccounts = identity?.new_accounts || [];
 
@@ -166,23 +169,14 @@ function queueNewAccounts(identity) {
   }
 
   const savedIds = getSavedAdditionalAccountIds();
-
   let added = 0;
 
   for (const item of newAccounts) {
     const accountId = String(item?.id || "").trim();
 
-    if (!isValidAccountId(accountId)) {
-      continue;
-    }
-
-    if (savedIds.has(accountId)) {
-      continue;
-    }
-
-    if (pendingAccountIds.includes(accountId)) {
-      continue;
-    }
+    if (!isValidAccountId(accountId)) continue;
+    if (savedIds.has(accountId)) continue;
+    if (pendingAccountIds.includes(accountId)) continue;
 
     pendingAccountIds.push(accountId);
     added++;
@@ -191,90 +185,131 @@ function queueNewAccounts(identity) {
   return added;
 }
 
-// ---------------- AUTOMATIC ACCOUNT DISCOVERY ----------------
+// ---------------- EVIDENCE QUEUE ----------------
 
-async function runAutoDiscovery() {
-  if (autoDiscoveryBusy || !process.env.AQ_TOKEN) {
-    return;
+function getEvidenceQueueKey(account, fileId) {
+  return `${account}:${fileId}`;
+}
+
+function queueEvidenceFiles(accountExport, accountId) {
+  const files = accountExport?.files || [];
+
+  if (!Array.isArray(files)) {
+    return 0;
   }
 
-  autoDiscoveryBusy = true;
+  let added = 0;
 
-  try {
-    // Fetch one pending account per MCP call.
-    if (pendingAccountIds.length > 0) {
-      const accountId = pendingAccountIds.shift();
+  for (const file of files) {
+    const fileId = String(file?.id || "").trim();
 
-      try {
-        console.log(
-          `[AUTO DISCOVERY] Fetching account ${accountId}`
-        );
+    if (!isValidFileId(fileId)) continue;
 
-        const result = await callTool("get_new_account", {
-          account: accountId,
-        });
+    const filePath = path.join(FILES_DIR, `${fileId}.txt`);
 
-        const accounts = result?.accounts || [];
+    // Already downloaded.
+    if (fs.existsSync(filePath)) continue;
 
-        const matchingAccount = accounts.find(
-          account =>
-            String(account?.id) === accountId
-        );
+    const alreadyQueued = pendingEvidenceFiles.some(
+      item =>
+        getEvidenceQueueKey(item.account, item.fileId) ===
+        getEvidenceQueueKey(accountId, fileId)
+    );
 
-        if (!matchingAccount) {
-          throw new Error(
-            `MCP export did not contain account ${accountId}`
-          );
-        }
+    if (alreadyQueued) continue;
 
-        saveData(`account_${accountId}.json`, result);
+    pendingEvidenceFiles.push({
+      account: accountId,
+      fileId,
+    });
 
-        console.log(
-          `[AUTO DISCOVERY] Account ${accountId} saved successfully`
-        );
+    added++;
+  }
 
-      } catch (error) {
-        // Retry on the next discovery cycle.
-        if (!pendingAccountIds.includes(accountId)) {
-          pendingAccountIds.unshift(accountId);
-        }
+  return added;
+}
 
-        console.error(
-          `[AUTO DISCOVERY] Account ${accountId} failed:`,
-          error.message
-        );
-      }
+// Queue missing evidence files from accounts already saved.
+// This also handles H and K, which were fetched before this update.
+function queueMissingEvidenceFiles() {
+  const filenames = fs.readdirSync(DATA_DIR).filter(file =>
+    /^account_[A-Za-z0-9_-]+\.json$/.test(file)
+  );
 
-      return;
+  let added = 0;
+
+  for (const filename of filenames) {
+    try {
+      const accountExport = readJSON(filename);
+
+      const accountId = filename
+        .replace(/^account_/, "")
+        .replace(/\.json$/, "");
+
+      added += queueEvidenceFiles(
+        accountExport,
+        accountId
+      );
+
+    } catch (error) {
+      console.error(
+        `[EVIDENCE] Could not inspect ${filename}:`,
+        error.message
+      );
     }
-
-    // No pending account: discover newly released accounts.
-    console.log("[AUTO DISCOVERY] Checking for new accounts...");
-
-    const identity = await callTool("whoami");
-
-    saveData("whoami.json", identity);
-
-    const added = queueNewAccounts(identity);
-
-    console.log(
-      `[AUTO DISCOVERY] Found ${added} new account(s) to fetch`
-    );
-
-  } catch (error) {
-    console.error(
-      "[AUTO DISCOVERY] Discovery failed:",
-      error.message
-    );
-  } finally {
-    autoDiscoveryBusy = false;
   }
+
+  return added;
+}
+
+// Extract actual file text from the MCP response.
+function extractEvidenceText(result) {
+  if (typeof result === "string") {
+    return result;
+  }
+
+  if (!result || typeof result !== "object") {
+    throw new Error("Evidence response is empty");
+  }
+
+  if (typeof result.text === "string") {
+    return result.text;
+  }
+
+  if (typeof result.content === "string") {
+    return result.content;
+  }
+
+  if (typeof result.data === "string") {
+    return result.data;
+  }
+
+  if (result.file && typeof result.file.text === "string") {
+    return result.file.text;
+  }
+
+  if (Array.isArray(result.content)) {
+    const textParts = result.content
+      .filter(item => item && typeof item.text === "string")
+      .map(item => item.text);
+
+    if (textParts.length > 0) {
+      return textParts.join("\n");
+    }
+  }
+
+  if (result.data && typeof result.data === "object") {
+    return extractEvidenceText(result.data);
+  }
+
+  throw new Error(
+    `Could not identify evidence text in MCP response. Returned fields: ${Object.keys(result).join(", ")}`
+  );
 }
 
 // ---------------- DASHBOARD DATA ----------------
 
 function getDashboardData() {
-  // Prefer Questathon MCP export for A and B.
   const live = readJSON("accounts_live.json");
   const base = live || readJSON("accounts.json");
 
@@ -288,7 +323,7 @@ function getDashboardData() {
     files: [...(base.files || [])],
   };
 
-  // Load every saved additional account automatically.
+  // Load all saved additional account exports.
   const accountFiles = fs.readdirSync(DATA_DIR).filter(file =>
     /^account_[A-Za-z0-9_-]+\.json$/.test(file)
   );
@@ -297,29 +332,20 @@ function getDashboardData() {
     try {
       const accountExport = readJSON(filename);
 
-      if (!accountExport) {
-        continue;
-      }
+      if (!accountExport) continue;
 
-      const accounts = accountExport.accounts || [];
-
-      for (const accountData of accounts) {
-        if (!accountData?.id) {
-          continue;
-        }
+      for (const accountData of accountExport.accounts || []) {
+        if (!accountData?.id) continue;
 
         const accountId = String(accountData.id);
 
-        // Avoid duplicate accounts.
         result.accounts = result.accounts.filter(
-          account =>
-            String(account.id) !== accountId
+          account => String(account.id) !== accountId
         );
 
         result.accounts.push(accountData);
       }
 
-      // Merge evidence file metadata.
       const accountId = filename
         .replace(/^account_/, "")
         .replace(/\.json$/, "");
@@ -352,6 +378,136 @@ function getDashboardData() {
   }
 
   return result;
+}
+
+// ---------------- AUTOMATIC DISCOVERY ----------------
+
+async function runAutoDiscovery() {
+  if (autoDiscoveryBusy || !process.env.AQ_TOKEN) {
+    return;
+  }
+
+  autoDiscoveryBusy = true;
+
+  try {
+    // 1. Fetch an account first if one is waiting.
+    if (pendingAccountIds.length > 0) {
+      const accountId = pendingAccountIds.shift();
+
+      try {
+        console.log(
+          `[AUTO] Fetching account ${accountId}`
+        );
+
+        const result = await callTool("get_new_account", {
+          account: accountId,
+        });
+
+        const matchingAccount = (
+          result?.accounts || []
+        ).find(
+          account => String(account?.id) === accountId
+        );
+
+        if (!matchingAccount) {
+          throw new Error(
+            `Account ${accountId} missing from MCP export`
+          );
+        }
+
+        saveData(`account_${accountId}.json`, result);
+
+        const queuedFiles = queueEvidenceFiles(
+          result,
+          accountId
+        );
+
+        console.log(
+          `[AUTO] Account ${accountId} saved. ${queuedFiles} evidence file(s) queued.`
+        );
+
+      } catch (error) {
+        pendingAccountIds.unshift(accountId);
+
+        console.error(
+          `[AUTO] Account ${accountId} failed:`,
+          error.message
+        );
+      }
+
+      return;
+    }
+
+    // 2. Download one pending evidence file.
+    if (pendingEvidenceFiles.length > 0) {
+      const task = pendingEvidenceFiles.shift();
+
+      try {
+        console.log(
+          `[AUTO] Downloading evidence ${task.fileId} for ${task.account}`
+        );
+
+        const result = await callTool(
+          "get_new_account_file",
+          {
+            account: task.account,
+            file_id: task.fileId,
+          }
+        );
+
+        const evidenceText = extractEvidenceText(result);
+
+        const filePath = path.join(
+          FILES_DIR,
+          `${task.fileId}.txt`
+        );
+
+        fs.writeFileSync(
+          filePath,
+          evidenceText,
+          "utf8"
+        );
+
+        console.log(
+          `[AUTO] Evidence ${task.fileId} downloaded successfully`
+        );
+
+      } catch (error) {
+        pendingEvidenceFiles.push(task);
+
+        console.error(
+          `[AUTO] Evidence ${task.fileId} failed:`,
+          error.message
+        );
+      }
+
+      return;
+    }
+
+    // 3. No pending work: discover newly released accounts.
+    console.log("[AUTO] Checking for new accounts...");
+
+    const identity = await callTool("whoami");
+
+    saveData("whoami.json", identity);
+
+    const newAccounts = queueNewAccounts(identity);
+
+    // Also check for missing files in previously saved exports.
+    const newFiles = queueMissingEvidenceFiles();
+
+    console.log(
+      `[AUTO] ${newAccounts} new account(s), ${newFiles} missing evidence file(s) queued.`
+    );
+
+  } catch (error) {
+    console.error(
+      "[AUTO] Discovery failed:",
+      error.message
+    );
+  } finally {
+    autoDiscoveryBusy = false;
+  }
 }
 
 // ---------------- DASHBOARD ----------------
@@ -465,13 +621,15 @@ app.post("/api/mcp/whoami", async (req, res) => {
 
     saveData("whoami.json", result);
 
-    // Automatically queue accounts discovered by this request.
     const queued = queueNewAccounts(result);
+
+    const queuedFiles = queueMissingEvidenceFiles();
 
     res.json({
       success: true,
       data: result,
       queued_accounts: queued,
+      queued_evidence_files: queuedFiles,
     });
 
   } catch (error) {
@@ -482,21 +640,19 @@ app.post("/api/mcp/whoami", async (req, res) => {
   }
 });
 
-// ---------------- FETCH ADDITIONAL ACCOUNTS ----------------
+// ---------------- FETCH ADDITIONAL ACCOUNT ----------------
 
 app.post("/api/mcp/new-account", async (req, res) => {
   try {
-    const account = String(req.body?.account || "")
-      .trim();
+    const account = String(req.body?.account || "").trim();
 
     if (!isValidAccountId(account)) {
       return res.status(400).json({
         success: false,
-        error: "Invalid account ID.",
+        error: "Invalid account ID",
       });
     }
 
-    // Only fetch accounts released to this player.
     const identity = readJSON("whoami.json");
 
     const availableAccounts = identity?.new_accounts || [];
@@ -516,7 +672,9 @@ app.post("/api/mcp/new-account", async (req, res) => {
       account,
     });
 
-    const matchingAccount = (result?.accounts || []).find(
+    const matchingAccount = (
+      result?.accounts || []
+    ).find(
       item => String(item?.id) === account
     );
 
@@ -528,7 +686,11 @@ app.post("/api/mcp/new-account", async (req, res) => {
 
     saveData(`account_${account}.json`, result);
 
-    // Remove it from the automatic queue if already queued.
+    const queuedFiles = queueEvidenceFiles(
+      result,
+      account
+    );
+
     pendingAccountIds = pendingAccountIds.filter(
       id => id !== account
     );
@@ -537,7 +699,71 @@ app.post("/api/mcp/new-account", async (req, res) => {
       success: true,
       source: "Questathon MCP",
       account,
+      queued_evidence_files: queuedFiles,
       data: result,
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ---------------- FETCH ONE EVIDENCE FILE ----------------
+
+app.post("/api/mcp/new-account-file", async (req, res) => {
+  try {
+    const account = String(req.body?.account || "").trim();
+    const fileId = String(req.body?.file_id || "").trim();
+
+    if (!isValidAccountId(account) || !isValidFileId(fileId)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid account or file ID",
+      });
+    }
+
+    const accountExport = readJSON(`account_${account}.json`);
+
+    const fileExists = (
+      accountExport?.files || []
+    ).some(file => String(file?.id) === fileId);
+
+    if (!fileExists) {
+      return res.status(404).json({
+        success: false,
+        error: "File is not listed in this account export",
+      });
+    }
+
+    const result = await callTool(
+      "get_new_account_file",
+      {
+        account,
+        file_id: fileId,
+      }
+    );
+
+    const evidenceText = extractEvidenceText(result);
+
+    fs.writeFileSync(
+      path.join(FILES_DIR, `${fileId}.txt`),
+      evidenceText,
+      "utf8"
+    );
+
+    pendingEvidenceFiles = pendingEvidenceFiles.filter(
+      item =>
+        !(item.account === account && item.fileId === fileId)
+    );
+
+    res.json({
+      success: true,
+      account,
+      file_id: fileId,
+      message: "Evidence file downloaded successfully",
     });
 
   } catch (error) {
@@ -552,9 +778,7 @@ app.post("/api/mcp/new-account", async (req, res) => {
 
 app.get("/api/accounts", (req, res) => {
   try {
-    const accounts = getDashboardData();
-
-    res.json(accounts);
+    res.json(getDashboardData());
 
   } catch (error) {
     res.status(500).json({
@@ -671,7 +895,7 @@ app.post("/api/notes", async (req, res) => {
 app.get("/api/evidence/:id", (req, res) => {
   const id = req.params.id;
 
-  if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+  if (!isValidFileId(id)) {
     return res.status(400).json({
       error: "Invalid evidence file ID",
     });
@@ -721,13 +945,19 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`CRM running at http://localhost:${PORT}`);
 
-  // First automatic identity check after startup.
+  // Recover pending evidence downloads after a restart.
+  const queued = queueMissingEvidenceFiles();
+
+  console.log(
+    `[STARTUP] ${queued} missing evidence file(s) queued`
+  );
+
+  // First automatic check.
   setTimeout(() => {
     runAutoDiscovery();
   }, 15_000);
 
-  // Repeat discovery every 65 seconds.
-  // One MCP call per cycle, maximum.
+  // One automatic MCP task every 65 seconds.
   setInterval(() => {
     runAutoDiscovery();
   }, 65_000);

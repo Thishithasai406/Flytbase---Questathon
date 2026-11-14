@@ -116,7 +116,7 @@ function saveData(filename, data) {
 // ---------------- DASHBOARD DATA ----------------
 
 function getDashboardData() {
-  // Prefer live Questathon data for A and B
+  // Prefer Questathon MCP export for A and B
   const live = readJSON("accounts_live.json");
   const base = live || readJSON("accounts.json");
 
@@ -130,29 +130,37 @@ function getDashboardData() {
     files: [...(base.files || [])],
   };
 
-  // Load Kestrel Estates export
-  const kExport = readJSON("account_K.json");
+  // Load all additional fetched accounts: K and H
+  const additionalAccounts = ["K", "H"];
 
-  if (kExport) {
-    const kAccount = (kExport.accounts || []).find(
-      account => String(account.id) === "K"
+  for (const accountId of additionalAccounts) {
+    const accountExport = readJSON(`account_${accountId}.json`);
+
+    if (!accountExport) {
+      continue;
+    }
+
+    // Find the account in its saved export
+    const accountData = (accountExport.accounts || []).find(
+      account => String(account.id) === accountId
     );
 
-    if (kAccount) {
+    if (accountData) {
+      // Avoid duplicate accounts
       result.accounts = result.accounts.filter(
-        account => String(account.id) !== "K"
+        account => String(account.id) !== accountId
       );
 
       result.accounts.push({
-        ...kAccount,
-        id: "K",
+        ...accountData,
+        id: accountId,
       });
     }
 
-    // Merge K evidence file metadata
-    const kFiles = (kExport.files || []).map(file => ({
+    // Merge evidence file metadata
+    const accountFiles = (accountExport.files || []).map(file => ({
       ...file,
-      account: "K",
+      account: accountId,
       title: file.title || file.name || file.id,
     }));
 
@@ -160,7 +168,7 @@ function getDashboardData() {
       result.files.map(file => file.id)
     );
 
-    for (const file of kFiles) {
+    for (const file of accountFiles) {
       if (file.id && !existingFileIds.has(file.id)) {
         result.files.push(file);
         existingFileIds.add(file.id);
@@ -288,16 +296,18 @@ app.post("/api/mcp/whoami", async (req, res) => {
   }
 });
 
-// ---------------- FETCH THIRD ACCOUNT ----------------
+// ---------------- FETCH ADDITIONAL ACCOUNTS ----------------
 
 app.post("/api/mcp/new-account", async (req, res) => {
   try {
-    const account = String(req.body?.account || "").trim();
+    const account = String(req.body?.account || "")
+      .trim()
+      .toUpperCase();
 
-    if (account !== "K") {
+    if (!["K", "H"].includes(account)) {
       return res.status(400).json({
         success: false,
-        error: "Invalid account. Expected K.",
+        error: "Invalid account. Expected K or H.",
       });
     }
 
@@ -305,10 +315,11 @@ app.post("/api/mcp/new-account", async (req, res) => {
       account,
     });
 
-    saveData("account_K.json", result);
+    saveData(`account_${account}.json`, result);
 
     res.json({
       success: true,
+      source: "Questathon MCP",
       account,
       data: result,
     });

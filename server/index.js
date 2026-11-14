@@ -113,6 +113,63 @@ function saveData(filename, data) {
   );
 }
 
+// ---------------- DASHBOARD DATA ----------------
+
+function getDashboardData() {
+  const base = readJSON("accounts.json");
+
+  if (!base) {
+    throw new Error("Account data not found");
+  }
+
+  const result = {
+    ...base,
+    accounts: [...(base.accounts || [])],
+    files: [...(base.files || [])],
+  };
+
+  // Load Kestrel Estates export
+  const kExport = readJSON("account_K.json");
+
+  if (kExport) {
+    const kAccount = (kExport.accounts || []).find(
+      account => String(account.id) === "K"
+    );
+
+    if (kAccount) {
+      // Prevent duplicate K entries
+      result.accounts = result.accounts.filter(
+        account => String(account.id) !== "K"
+      );
+
+      result.accounts.push({
+        ...kAccount,
+        id: "K",
+      });
+    }
+
+    // Merge K evidence file metadata
+    const kFiles = (kExport.files || []).map(file => ({
+      ...file,
+      account: "K",
+      title: file.title || file.name || file.id,
+    }));
+
+    const existingFileIds = new Set(
+      result.files.map(file => file.id)
+    );
+
+    for (const file of kFiles) {
+      if (file.id && !existingFileIds.has(file.id)) {
+        result.files.push(file);
+        existingFileIds.add(file.id);
+      }
+    }
+  }
+
+  return result;
+}
+
 // ---------------- DASHBOARD ----------------
 
 app.get("/", (req, res) => {
@@ -244,15 +301,14 @@ app.post("/api/mcp/new-account", async (req, res) => {
 // ---------------- LOCAL ACCOUNTS ----------------
 
 app.get("/api/accounts", (req, res) => {
-  const accounts = readJSON("accounts.json");
-
-  if (!accounts) {
-    return res.status(404).json({
-      error: "Account data not found",
+  try {
+    const accounts = getDashboardData();
+    res.json(accounts);
+  } catch (error) {
+    res.status(500).json({
+      error: error.message,
     });
   }
-
-  res.json(accounts);
 });
 
 // ---------------- LOCAL SIGNALS ----------------
@@ -365,9 +421,17 @@ app.get("/api/evidence/:id", (req, res) => {
     });
   }
 
-  const accounts = readJSON("accounts.json");
+  let dashboardData;
 
-  const allowed = accounts?.files?.some(
+  try {
+    dashboardData = getDashboardData();
+  } catch (error) {
+    return res.status(500).json({
+      error: error.message,
+    });
+  }
+
+  const allowed = dashboardData.files.some(
     file => file.id === id
   );
 
@@ -377,16 +441,16 @@ app.get("/api/evidence/:id", (req, res) => {
     });
   }
 
-  const file = path.join(FILES_DIR, `${id}.txt`);
+  const filePath = path.join(FILES_DIR, `${id}.txt`);
 
-  if (!fs.existsSync(file)) {
+  if (!fs.existsSync(filePath)) {
     return res.status(404).json({
-      error: "Evidence file not downloaded",
+      error: `Evidence file ${id} has not been downloaded yet`,
     });
   }
 
   res.type("text/plain").send(
-    fs.readFileSync(file, "utf8")
+    fs.readFileSync(filePath, "utf8")
   );
 });
 

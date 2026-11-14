@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AccountOS · Monday brief</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,650&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">A</div>
+        <div>
+          <h2>AccountOS</h2>
+          <p>Monday brief</p>
+        </div>
+      </div>
+
+      <p class="sidebar-label">This account</p>
+      <button class="nav-item active" type="button" data-view="brief">Brief</button>
+      <button class="nav-item" type="button" data-view="book">01 · Book worth</button>
+      <button class="nav-item" type="button" data-view="power">02 · Who has power</button>
+      <button class="nav-item" type="button" data-view="moves">03 · Do first</button>
+      <button class="nav-item" type="button" data-view="risks">04 · About to go wrong</button>
+      <button class="nav-item" type="button" data-view="gaps">05 · Still unknown</button>
+
+      <p class="sidebar-label">Record</p>
+      <button class="nav-item" type="button" data-view="evidence">Evidence</button>
+      <button class="nav-item" type="button" data-view="signals">Live signals</button>
+
+      <div class="sidebar-bottom">
+        <span class="status-dot"></span>
+        <span id="liveStatus">Signals checked from the saved copy</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="viewKicker">ACCOUNT</p>
+          <h1 id="viewTitle">Monday brief</h1>
+        </div>
+        <div class="account-tabs" id="accountTabs">
+          <button class="account-tab active" type="button" data-account="A">Eastern Counties Police Alliance</button>
+          <button class="account-tab" type="button" data-account="B">Aldermoor Industrial Group</button>
+        </div>
+      </header>
+
+      <p class="story" id="accountSummary">Loading the account record…</p>
+      <div class="cite-bar" id="citeBar" hidden></div>
+
+      <section class="view" data-view="brief" id="view-brief">
+        <div id="briefBody" class="stack">Loading…</div>
+      </section>
+
+      <section class="view" data-view="book" id="view-book" hidden>
+        <div id="bookBody" class="stack"></div>
+      </section>
+
+      <section class="view" data-view="power" id="view-power" hidden>
+        <div id="powerBody" class="stack"></div>
+      </section>
+
+      <section class="view" data-view="moves" id="view-moves" hidden>
+        <div id="movesBody" class="stack"></div>
+        <form class="panel note-form" id="noteForm">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">WRITE BACK</p>
+              <h2>Note on this account</h2>
+            </div>
+          </div>
+          <p class="hint">Saved through the server with write_note. The token never reaches the browser.</p>
+          <label>Title <input name="title" type="text" maxlength="120" placeholder="Short label" /></label>
+          <label>Kind
+            <select name="kind">
+              <option value="next_step">Next step</option>
+              <option value="risk">Risk</option>
+              <option value="task">Task</option>
+              <option value="note">Note</option>
+            </select>
+          </label>
+          <label>Text <textarea name="text" rows="3" required placeholder="What should be on the record"></textarea></label>
+          <button class="primary" type="submit">Write note</button>
+          <p class="hint" id="noteStatus"></p>
+          <div id="notesList" class="stack"></div>
+        </form>
+      </section>
+
+      <section class="view" data-view="risks" id="view-risks" hidden>
+        <div id="risksBody" class="stack"></div>
+      </section>
+
+      <section class="view" data-view="gaps" id="view-gaps" hidden>
+        <div id="gapsBody" class="stack"></div>
+      </section>
+
+      <section class="view" data-view="evidence" id="view-evidence" hidden>
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">FILES</p>
+              <h2>Evidence on this account</h2>
+            </div>
+            <span class="count" id="evidenceLabel">0 files</span>
+          </div>
+          <div id="evidenceList" class="evidence-list"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">SOURCE</p>
+              <h2 id="evidenceTitle">Nothing open</h2>
+            </div>
+          </div>
+          <pre id="evidenceViewer" class="evidence-viewer">Choose a file. The text is the saved copy, not a new fetch.</pre>
+        </div>
+      </section>
+
+      <section class="view" data-view="signals" id="view-signals" hidden>
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">MCP</p>
+              <h2>Live signals</h2>
+            </div>
+            <button class="primary" type="button" id="refreshBtn">Check for signals</button>
+          </div>
+          <p class="hint">One call a minute. The page also checks on its own about once a minute while it is open.</p>
+          <div id="signalsList" class="stack"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

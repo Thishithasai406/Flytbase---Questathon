@@ -33,12 +33,14 @@ function escapeHTML(value) {
 function money(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "—";
-  return "$" + number.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return "$" + number.toLocaleString("en-US", {
+    maximumFractionDigits: 0
+  });
 }
 
 function getSelectedAccount() {
   return accountsData?.accounts?.find(
-    (account) => String(account.id) === selectedAccountId
+    (account) => String(account.id) === String(selectedAccountId)
   );
 }
 
@@ -51,24 +53,36 @@ function factById(account, id) {
 }
 
 function personByName(account, name) {
-  return (account.stakeholders || []).find((person) => person.name === name);
+  return (account.stakeholders || []).find(
+    (person) => person.name === name
+  );
 }
 
 function stanceClass(relationship) {
   const value = String(relationship || "").toLowerCase();
+
   if (value.includes("ally") || value.includes("warm")) return "green";
   if (value.includes("hostile") || value.includes("block")) return "red";
+
   return "orange";
 }
 
 function powerFromRole(role) {
   const text = String(role || "").toLowerCase();
   const slots = [];
+
   if (/finance|controller/.test(text)) slots.push("Pays");
   if (/procurement/.test(text)) slots.push("Runs the buy");
-  if (/data protection|protection officer|insurance|risk/.test(text)) slots.push("Can block");
-  if (/inspector|plant manager|operator/.test(text)) slots.push("Uses it");
-  if (/programme lead|head of security/.test(text)) slots.push("Owns the programme");
+  if (/data protection|protection officer|insurance|risk/.test(text)) {
+    slots.push("Can block");
+  }
+  if (/inspector|plant manager|operator/.test(text)) {
+    slots.push("Uses it");
+  }
+  if (/programme lead|head of security/.test(text)) {
+    slots.push("Owns the programme");
+  }
+
   return slots.length ? slots : ["Role does not say"];
 }
 
@@ -85,6 +99,7 @@ function classifyDeal(account, opportunity) {
     }
 
     const fact = factById(account, id);
+
     if (!fact) {
       cites.push({ id, kind: "unknown" });
       continue;
@@ -108,38 +123,67 @@ function ownerFor(account, opportunity) {
 
   for (const id of opportunity.evidence || []) {
     const fact = factById(account, id);
+
     if (!fact || fact.status === "claim" || !fact.said_by) continue;
+
     const person = personByName(account, fact.said_by);
-    if (person && person.available !== false && !people.some((item) => item.id === person.id)) {
+
+    if (
+      person &&
+      person.available !== false &&
+      !people.some((item) => item.id === person.id)
+    ) {
       people.push(person);
     }
   }
 
   const rank = { ally: 0, warm: 1, neutral: 2 };
-  people.sort((a, b) => (rank[a.relationship] ?? 3) - (rank[b.relationship] ?? 3));
+
+  people.sort(
+    (a, b) => (rank[a.relationship] ?? 3) - (rank[b.relationship] ?? 3)
+  );
+
   return people[0] || null;
 }
 
 function rankedMoves(account) {
   const open = (account.opportunities || []).filter((opportunity) => {
-    const status = String(opportunity.blocker?.status || "").toLowerCase();
+    const status = String(
+      opportunity.blocker?.status || ""
+    ).toLowerCase();
+
     const deadline = opportunity.deadline;
-    const deadlineOpen = deadline && deadline.met === false && deadline.passed === false;
+    const deadlineOpen =
+      deadline &&
+      deadline.met === false &&
+      deadline.passed === false;
+
     return status.includes("open") || deadlineOpen;
   });
 
   return open
-    .map((opportunity) => ({ opportunity, review: classifyDeal(account, opportunity) }))
+    .map((opportunity) => ({
+      opportunity,
+      review: classifyDeal(account, opportunity)
+    }))
     .sort((a, b) => {
       const urgency = (item) => {
         const deadline = item.opportunity.deadline;
+
         if (deadline && deadline.passed) return 0;
         if (deadline && deadline.met === false) return 1;
+
         return 2;
       };
+
       const gap = urgency(a) - urgency(b);
+
       if (gap !== 0) return gap;
-      return (Number(b.opportunity.worth_up_to) || 0) - (Number(a.opportunity.worth_up_to) || 0);
+
+      return (
+        (Number(b.opportunity.worth_up_to) || 0) -
+        (Number(a.opportunity.worth_up_to) || 0)
+      );
     })
     .slice(0, 3);
 }
@@ -149,10 +193,17 @@ function contradictions(account) {
 
   for (const fact of account.facts || []) {
     if (!/_0$/.test(fact.id)) continue;
+
     const stem = fact.id.slice(0, -1);
+
     const later = (account.facts || []).find((item) => {
-      return item.id !== fact.id && item.id.startsWith(stem) && item.status !== "claim";
+      return (
+        item.id !== fact.id &&
+        item.id.startsWith(stem) &&
+        item.status !== "claim"
+      );
     });
+
     if (later) pairs.push({ claim: fact, later });
   }
 
@@ -164,26 +215,41 @@ function risksFor(account) {
   const seen = new Set();
 
   for (const opportunity of account.opportunities || []) {
-    const status = String(opportunity.blocker?.status || "").toLowerCase();
+    const status = String(
+      opportunity.blocker?.status || ""
+    ).toLowerCase();
+
     if (status.includes("open")) {
       items.push({
         title: opportunity.title,
         detail: opportunity.blocker?.text || "Blocker is open.",
-        when: opportunity.deadline?.text || "No date. The blocker is already open.",
-        sources: [opportunity.id, ...(opportunity.evidence || [])]
+        when:
+          opportunity.deadline?.text ||
+          "No date. The blocker is already open.",
+        sources: [
+          opportunity.id,
+          ...(opportunity.evidence || [])
+        ]
       });
     }
 
-    if (opportunity.deadline && opportunity.deadline.met === false && !opportunity.deadline.passed) {
-      const when = opportunity.deadline.moves_left != null
-        ? `${opportunity.deadline.moves_left} moves left on the record`
-        : "Not marked passed, and not marked met";
+    if (
+      opportunity.deadline &&
+      opportunity.deadline.met === false &&
+      !opportunity.deadline.passed
+    ) {
+      const when =
+        opportunity.deadline.moves_left != null
+          ? `${opportunity.deadline.moves_left} moves left on the record`
+          : "Not marked passed, and not marked met";
+
       items.push({
         title: "Deadline still open",
         detail: opportunity.deadline.text,
         when,
         sources: [opportunity.id]
       });
+
       seen.add(opportunity.deadline.text);
     }
 
@@ -194,16 +260,22 @@ function risksFor(account) {
         when: "Already passed on the record",
         sources: [opportunity.id]
       });
+
       seen.add(opportunity.deadline.text);
     }
   }
 
   for (const deadline of account.deadlines || []) {
     if (seen.has(deadline.text)) continue;
+
     items.push({
-      title: deadline.passed ? "Deadline passed" : "Account deadline",
+      title: deadline.passed
+        ? "Deadline passed"
+        : "Account deadline",
       detail: deadline.text,
-      when: deadline.passed ? "Already passed on the record" : "Not marked passed",
+      when: deadline.passed
+        ? "Already passed on the record"
+        : "Not marked passed",
       sources: []
     });
   }
@@ -211,9 +283,15 @@ function risksFor(account) {
   for (const pair of contradictions(account)) {
     items.push({
       title: `Claim ${pair.claim.id} is not the later record`,
-      detail: `${pair.claim.text} Later (${pair.later.id}, ${pair.later.status}): ${pair.later.text}`,
+      detail:
+        `${pair.claim.text} Later (${pair.later.id}, ` +
+        `${pair.later.status}): ${pair.later.text}`,
       when: "Already on the record",
-      sources: [pair.claim.id, pair.later.id, pair.later.verified_by].filter(Boolean)
+      sources: [
+        pair.claim.id,
+        pair.later.id,
+        pair.later.verified_by
+      ].filter(Boolean)
     });
   }
 
@@ -225,6 +303,7 @@ function gapsFor(account) {
 
   for (const fact of account.facts || []) {
     if (fact.status !== "claim") continue;
+
     gaps.push({
       title: fact.text,
       why: "This is marked claim. It is not a number the book can rest on.",
@@ -235,23 +314,45 @@ function gapsFor(account) {
 
   for (const opportunity of account.opportunities || []) {
     const review = classifyDeal(account, opportunity);
+
     if (review.backed) continue;
+
     const owner = ownerFor(account, opportunity);
+
     gaps.push({
       title: `${opportunity.title} has no file and no verified fact`,
-      why: `${money(opportunity.worth_up_to)} is only a ceiling on ${opportunity.id}.`,
-      ask: owner ? owner.name : "Nobody named in the non-claim evidence",
-      sources: [opportunity.id, ...(opportunity.evidence || [])]
+      why:
+        `${money(opportunity.worth_up_to)} is only a ceiling ` +
+        `on ${opportunity.id}.`,
+      ask: owner
+        ? owner.name
+        : "Nobody named in the non-claim evidence",
+      sources: [
+        opportunity.id,
+        ...(opportunity.evidence || [])
+      ]
     });
   }
 
   for (const opportunity of account.opportunities || []) {
     if (opportunity.deadline) continue;
-    if (!String(opportunity.blocker?.status || "").toLowerCase().includes("open")) continue;
+
+    if (
+      !String(opportunity.blocker?.status || "")
+        .toLowerCase()
+        .includes("open")
+    ) {
+      continue;
+    }
+
     gaps.push({
       title: `${opportunity.title} has an open blocker and no date`,
-      why: "The first-move list cannot put a date on it because the record has none.",
-      ask: ownerFor(account, opportunity)?.name || "No owner in the evidence",
+      why:
+        "The first-move list cannot put a date on it because " +
+        "the record has none.",
+      ask:
+        ownerFor(account, opportunity)?.name ||
+        "No owner in the evidence",
       sources: [opportunity.id]
     });
   }
@@ -262,16 +363,23 @@ function gapsFor(account) {
 function sourceButtons(ids) {
   const files = fileSet();
   const unique = [...new Set(ids.filter(Boolean))];
-  if (!unique.length) return `<span class="pill">No id on this line</span>`;
 
-  return `<div class="sources">${unique.map((id) => `
-    <button
-      type="button"
-      class="source"
-      data-source="${escapeHTML(id)}"
-      data-file="${files.has(id) ? "1" : "0"}"
-    >${escapeHTML(id)}</button>
-  `).join("")}</div>`;
+  if (!unique.length) {
+    return `<span class="pill">No id on this line</span>`;
+  }
+
+  return `
+    <div class="sources">
+      ${unique.map((id) => `
+        <button
+          type="button"
+          class="source"
+          data-source="${escapeHTML(id)}"
+          data-file="${files.has(id) ? "1" : "0"}"
+        >${escapeHTML(id)}</button>
+      `).join("")}
+    </div>
+  `;
 }
 
 function showView(view) {
@@ -282,29 +390,55 @@ function showView(view) {
   });
 
   document.querySelectorAll(".nav-item").forEach((button) => {
-    button.classList.toggle("active", button.dataset.view === view);
+    button.classList.toggle(
+      "active",
+      button.dataset.view === view
+    );
   });
 
-  const [kicker, title] = VIEW_TITLES[view] || ["ACCOUNT", "Monday brief"];
+  const [kicker, title] =
+    VIEW_TITLES[view] || ["ACCOUNT", "Monday brief"];
+
   $("viewKicker").textContent = kicker;
   $("viewTitle").textContent = title;
 }
 
-// UPDATED: Generate tabs from all accounts returned by the backend.
+// Dynamically create a tab for every account returned by the server.
 function renderAccountTabs() {
   const container = $("accountTabs");
 
-  if (!container || !accountsData?.accounts) return;
+  if (!container) return;
 
-  container.innerHTML = accountsData.accounts.map((account) => `
-    <button
-      class="account-tab ${String(account.id) === selectedAccountId ? "active" : ""}"
-      type="button"
-      data-account="${escapeHTML(account.id)}"
-    >
-      ${escapeHTML(account.name || `Account ${account.id}`)}
-    </button>
-  `).join("");
+  const accounts = accountsData?.accounts || [];
+
+  if (!accounts.length) {
+    container.innerHTML = "";
+    return;
+  }
+
+  // Keep the selected account valid.
+  const selectedExists = accounts.some(
+    (account) => String(account.id) === String(selectedAccountId)
+  );
+
+  if (!selectedExists) {
+    selectedAccountId = String(accounts[0].id);
+  }
+
+  container.innerHTML = accounts.map((account) => {
+    const id = String(account.id);
+    const active = id === String(selectedAccountId);
+
+    return `
+      <button
+        class="account-tab ${active ? "active" : ""}"
+        type="button"
+        data-account="${escapeHTML(id)}"
+      >
+        ${escapeHTML(account.name || `Account ${id}`)}
+      </button>
+    `;
+  }).join("");
 }
 
 function renderBrief(account) {
@@ -312,11 +446,27 @@ function renderBrief(account) {
     opportunity,
     review: classifyDeal(account, opportunity)
   }));
+
   const backed = deals.filter((deal) => deal.review.backed);
   const apart = deals.filter((deal) => !deal.review.backed);
-  const backedSum = backed.reduce((sum, deal) => sum + (Number(deal.opportunity.worth_up_to) || 0), 0);
-  const apartSum = apart.reduce((sum, deal) => sum + (Number(deal.opportunity.worth_up_to) || 0), 0);
-  const pitches = (account.offers || []).reduce((sum, offer) => sum + (Number(offer.value) || 0), 0);
+
+  const backedSum = backed.reduce(
+    (sum, deal) =>
+      sum + (Number(deal.opportunity.worth_up_to) || 0),
+    0
+  );
+
+  const apartSum = apart.reduce(
+    (sum, deal) =>
+      sum + (Number(deal.opportunity.worth_up_to) || 0),
+    0
+  );
+
+  const pitches = (account.offers || []).reduce(
+    (sum, offer) => sum + (Number(offer.value) || 0),
+    0
+  );
+
   const move = rankedMoves(account)[0];
   const risk = risksFor(account)[0];
   const gap = gapsFor(account)[0];
@@ -326,42 +476,73 @@ function renderBrief(account) {
       <button class="stat" type="button" data-open="book">
         <span>Ceiling with a file or a verified fact</span>
         <strong>${money(backedSum)}</strong>
-        <em>${backed.map((deal) => deal.opportunity.id).join(", ") || "None"}</em>
+        <em>
+          ${backed.map((deal) => deal.opportunity.id).join(", ") || "None"}
+        </em>
       </button>
+
       <button class="stat" type="button" data-open="book">
         <span>Ceiling kept apart. Not backed.</span>
         <strong>${money(apartSum)}</strong>
-        <em>${apart.map((deal) => deal.opportunity.id).join(", ") || "None"}</em>
+        <em>
+          ${apart.map((deal) => deal.opportunity.id).join(", ") || "None"}
+        </em>
       </button>
+
       <button class="stat" type="button" data-open="book">
         <span>Open pitches. Not in the book.</span>
         <strong>${money(pitches)}</strong>
-        <em>${(account.offers || []).map((offer) => offer.id).join(", ") || "None"}</em>
+        <em>
+          ${(account.offers || []).map((offer) => offer.id).join(", ") || "None"}
+        </em>
       </button>
     </div>
+
     <article class="card">
       <div class="card-top">
         <h3>First move</h3>
         <button class="ghost" type="button" data-open="moves">Open</button>
       </div>
-      <p>${move ? escapeHTML(move.opportunity.blocker?.text || move.opportunity.title) : "No open move on the record."}</p>
+      <p>
+        ${move
+          ? escapeHTML(
+              move.opportunity.blocker?.text ||
+              move.opportunity.title
+            )
+          : "No open move on the record."}
+      </p>
       ${move ? sourceButtons([move.opportunity.id]) : ""}
     </article>
+
     <article class="card">
       <div class="card-top">
         <h3>Nearest trouble</h3>
         <button class="ghost" type="button" data-open="risks">Open</button>
       </div>
-      <p>${risk ? escapeHTML(risk.detail) : "No open blocker, missed deadline, or contradicted claim on this account."}</p>
+      <p>
+        ${risk
+          ? escapeHTML(risk.detail)
+          : "No open blocker, missed deadline, or contradicted claim on this account."}
+      </p>
       ${risk ? sourceButtons(risk.sources) : ""}
     </article>
+
     <article class="card">
       <div class="card-top">
         <h3>Sharpest gap</h3>
         <button class="ghost" type="button" data-open="gaps">Open</button>
       </div>
-      <p>${gap ? escapeHTML(gap.title) : "No claim or unbacked ceiling on this account."}</p>
-      ${gap ? `<p class="meta">Ask ${escapeHTML(gap.ask)}</p>${sourceButtons(gap.sources)}` : ""}
+      <p>
+        ${gap
+          ? escapeHTML(gap.title)
+          : "No claim or unbacked ceiling on this account."}
+      </p>
+      ${
+        gap
+          ? `<p class="meta">Ask ${escapeHTML(gap.ask)}</p>
+             ${sourceButtons(gap.sources)}`
+          : ""
+      }
     </article>
   `;
 }
@@ -371,25 +552,49 @@ function renderBook(account) {
     opportunity,
     review: classifyDeal(account, opportunity)
   }));
+
   const backed = deals.filter((deal) => deal.review.backed);
   const apart = deals.filter((deal) => !deal.review.backed);
-  const sum = (rows) => rows.reduce((total, deal) => total + (Number(deal.opportunity.worth_up_to) || 0), 0);
+
+  const sum = (rows) =>
+    rows.reduce(
+      (total, deal) =>
+        total + (Number(deal.opportunity.worth_up_to) || 0),
+      0
+    );
 
   const dealCard = (deal) => `
     <article class="card">
       <div class="card-top">
         <h3>${escapeHTML(deal.opportunity.title)}</h3>
-        <span class="money ${deal.review.backed ? "" : "apart"}">${money(deal.opportunity.worth_up_to)}</span>
-      </div>
-      <div class="pills">
-        <span class="pill">${escapeHTML(deal.opportunity.id)}</span>
-        <span class="pill">${escapeHTML(deal.opportunity.stage || "stage not set")}</span>
-        <span class="pill ${deal.review.backed ? "green" : "orange"}">
-          ${deal.review.backed ? "Ceiling has a file or a verified fact" : "Kept apart"}
+        <span class="money ${deal.review.backed ? "" : "apart"}">
+          ${money(deal.opportunity.worth_up_to)}
         </span>
       </div>
-      <p class="meta">worth_up_to on ${escapeHTML(deal.opportunity.id)}. This is a ceiling on the record, not cash booked.</p>
-      ${sourceButtons([deal.opportunity.id, ...(deal.opportunity.evidence || [])])}
+
+      <div class="pills">
+        <span class="pill">${escapeHTML(deal.opportunity.id)}</span>
+        <span class="pill">
+          ${escapeHTML(deal.opportunity.stage || "stage not set")}
+        </span>
+        <span class="pill ${deal.review.backed ? "green" : "orange"}">
+          ${
+            deal.review.backed
+              ? "Ceiling has a file or a verified fact"
+              : "Kept apart"
+          }
+        </span>
+      </div>
+
+      <p class="meta">
+        worth_up_to on ${escapeHTML(deal.opportunity.id)}.
+        This is a ceiling on the record, not cash booked.
+      </p>
+
+      ${sourceButtons([
+        deal.opportunity.id,
+        ...(deal.opportunity.evidence || [])
+      ])}
     </article>
   `;
 
@@ -399,21 +604,55 @@ function renderBook(account) {
         <h3>${escapeHTML(offer.title)}</h3>
         <span class="money apart">${money(offer.value)}</span>
       </div>
-      <p class="meta">Pitch ${escapeHTML(offer.id)} to ${escapeHTML(offer.pitch_to || "nobody named")}. Status: ${escapeHTML(offer.status || "unknown")}. Not added to either ceiling.</p>
+
+      <p class="meta">
+        Pitch ${escapeHTML(offer.id)} to
+        ${escapeHTML(offer.pitch_to || "nobody named")}.
+        Status: ${escapeHTML(offer.status || "unknown")}.
+        Not added to either ceiling.
+      </p>
+
       ${sourceButtons([offer.id])}
     </article>
   `).join("");
 
   $("bookBody").innerHTML = `
     <div class="stats">
-      <div class="stat"><span>Backed ceilings</span><strong>${money(sum(backed))}</strong></div>
-      <div class="stat"><span>Not backed</span><strong>${money(sum(apart))}</strong></div>
-      <div class="stat"><span>Pitches, excluded</span><strong>${money((account.offers || []).reduce((total, offer) => total + (Number(offer.value) || 0), 0))}</strong></div>
+      <div class="stat">
+        <span>Backed ceilings</span>
+        <strong>${money(sum(backed))}</strong>
+      </div>
+
+      <div class="stat">
+        <span>Not backed</span>
+        <strong>${money(sum(apart))}</strong>
+      </div>
+
+      <div class="stat">
+        <span>Pitches, excluded</span>
+        <strong>
+          ${money(
+            (account.offers || []).reduce(
+              (total, offer) =>
+                total + (Number(offer.value) || 0),
+              0
+            )
+          )}
+        </strong>
+      </div>
     </div>
+
     <h2 class="section-label">Each deal</h2>
-    ${deals.map(dealCard).join("") || `<div class="empty">No opportunities on this account.</div>`}
+    ${
+      deals.map(dealCard).join("") ||
+      `<div class="empty">No opportunities on this account.</div>`
+    }
+
     <h2 class="section-label">Pitches kept out of the book</h2>
-    ${offers || `<div class="empty">No offers on this account.</div>`}
+    ${
+      offers ||
+      `<div class="empty">No offers on this account.</div>`
+    }
   `;
 }
 
@@ -422,35 +661,77 @@ function renderPower(account) {
     <article class="card person">
       <h3>${escapeHTML(person.name || "Unnamed")}</h3>
       <p>${escapeHTML(person.role || "Role not on the record")}</p>
+
       <div class="pills">
-        <span class="pill ${stanceClass(person.relationship)}">${escapeHTML(person.relationship || "stance not set")}</span>
-        ${person.available === false ? `<span class="pill red">Unavailable</span>` : ""}
-        ${powerFromRole(person.role).map((slot) => `<span class="pill">${escapeHTML(slot)}</span>`).join("")}
+        <span class="pill ${stanceClass(person.relationship)}">
+          ${escapeHTML(person.relationship || "stance not set")}
+        </span>
+
+        ${
+          person.available === false
+            ? `<span class="pill red">Unavailable</span>`
+            : ""
+        }
+
+        ${powerFromRole(person.role).map(
+          (slot) => `<span class="pill">${escapeHTML(slot)}</span>`
+        ).join("")}
       </div>
-      <p class="meta">Stance is the relationship field on ${escapeHTML(person.id)}. The slot comes from the role title, not from a guessed motive.</p>
+
+      <p class="meta">
+        Stance is the relationship field on ${escapeHTML(person.id)}.
+        The slot comes from the role title, not from a guessed motive.
+      </p>
+
       ${sourceButtons([person.id])}
     </article>
   `).join("");
 
   const deals = (account.opportunities || []).map((opportunity) => {
     const names = [];
+
     for (const id of opportunity.evidence || []) {
       const fact = factById(account, id);
-      if (fact?.said_by && !names.includes(fact.said_by)) names.push(fact.said_by);
+
+      if (fact?.said_by && !names.includes(fact.said_by)) {
+        names.push(fact.said_by);
+      }
     }
+
     return `
       <article class="card">
         <h3>${escapeHTML(opportunity.title)}</h3>
-        <p>People named in this deal's evidence: ${names.length ? escapeHTML(names.join(", ")) : "none"}.</p>
-        <p class="meta">Blocker: ${escapeHTML(opportunity.blocker?.text || "none on the record")} (${escapeHTML(opportunity.blocker?.status || "unknown")}).</p>
-        ${sourceButtons([opportunity.id, ...(opportunity.evidence || [])])}
+
+        <p>
+          People named in this deal's evidence:
+          ${names.length ? escapeHTML(names.join(", ")) : "none"}.
+        </p>
+
+        <p class="meta">
+          Blocker:
+          ${escapeHTML(opportunity.blocker?.text || "none on the record")}
+          (${escapeHTML(opportunity.blocker?.status || "unknown")}).
+        </p>
+
+        ${sourceButtons([
+          opportunity.id,
+          ...(opportunity.evidence || [])
+        ])}
       </article>
     `;
   }).join("");
 
   $("powerBody").innerHTML = `
-    <p class="hint">A person is listed as payer, user, blocker, or programme owner only when those words are in the role title. If the role does not say, the card says so.</p>
-    <div class="people">${people || `<div class="empty">No stakeholders on this account.</div>`}</div>
+    <p class="hint">
+      A person is listed as payer, user, blocker, or programme owner
+      only when those words are in the role title.
+      If the role does not say, the card says so.
+    </p>
+
+    <div class="people">
+      ${people || `<div class="empty">No stakeholders on this account.</div>`}
+    </div>
+
     ${deals}
   `;
 }
@@ -459,7 +740,11 @@ function renderMoves(account) {
   const moves = rankedMoves(account);
 
   if (!moves.length) {
-    $("movesBody").innerHTML = `<div class="empty">No open blocker and no unmet deadline on this account.</div>`;
+    $("movesBody").innerHTML = `
+      <div class="empty">
+        No open blocker and no unmet deadline on this account.
+      </div>
+    `;
     return;
   }
 
@@ -467,18 +752,48 @@ function renderMoves(account) {
     const opportunity = move.opportunity;
     const owner = ownerFor(account, opportunity);
     const date = opportunity.deadline?.text || "No date on the record";
+
     return `
       <article class="card move">
         <div class="rank">${index + 1}</div>
+
         <div>
-          <h3>${escapeHTML(opportunity.blocker?.text || opportunity.title)}</h3>
+          <h3>
+            ${escapeHTML(
+              opportunity.blocker?.text ||
+              opportunity.title
+            )}
+          </h3>
+
           <p>Deal: ${escapeHTML(opportunity.title)}</p>
+
           <div class="pills">
-            <span class="pill">Owner: ${escapeHTML(owner ? owner.name : "No owner named in the non-claim evidence")}</span>
-            <span class="pill ${opportunity.deadline ? "orange" : "red"}">Date: ${escapeHTML(date)}</span>
+            <span class="pill">
+              Owner:
+              ${escapeHTML(
+                owner
+                  ? owner.name
+                  : "No owner named in the non-claim evidence"
+              )}
+            </span>
+
+            <span class="pill ${opportunity.deadline ? "orange" : "red"}">
+              Date: ${escapeHTML(date)}
+            </span>
           </div>
-          <p class="meta">Rank rule: passed or still-open deadlines first, then the larger open ceiling. Owner is the available person behind a non-claim fact in the evidence. Ally, then warm, then neutral.</p>
-          ${sourceButtons([opportunity.id, owner?.id, ...(opportunity.evidence || [])])}
+
+          <p class="meta">
+            Rank rule: passed or still-open deadlines first,
+            then the larger open ceiling. Owner is the available
+            person behind a non-claim fact in the evidence.
+            Ally, then warm, then neutral.
+          </p>
+
+          ${sourceButtons([
+            opportunity.id,
+            owner?.id,
+            ...(opportunity.evidence || [])
+          ])}
         </div>
       </article>
     `;
@@ -489,7 +804,12 @@ function renderRisks(account) {
   const risks = risksFor(account);
 
   if (!risks.length) {
-    $("risksBody").innerHTML = `<div class="empty">Nothing on this account is an open blocker, a missed deadline, or a claim later contradicted. That is not the same as all clear.</div>`;
+    $("risksBody").innerHTML = `
+      <div class="empty">
+        Nothing on this account is an open blocker, a missed deadline,
+        or a claim later contradicted. That is not the same as all clear.
+      </div>
+    `;
     return;
   }
 
@@ -507,7 +827,11 @@ function renderGaps(account) {
   const gaps = gapsFor(account);
 
   if (!gaps.length) {
-    $("gapsBody").innerHTML = `<div class="empty">No claims, unbacked ceilings, or undated open blockers on this account.</div>`;
+    $("gapsBody").innerHTML = `
+      <div class="empty">
+        No claims, unbacked ceilings, or undated open blockers on this account.
+      </div>
+    `;
     return;
   }
 
@@ -515,18 +839,25 @@ function renderGaps(account) {
     <article class="card">
       <h3>${escapeHTML(gap.title)}</h3>
       <p>${escapeHTML(gap.why)}</p>
-      <p class="meta">Who could fill it: ${escapeHTML(gap.ask)}</p>
+      <p class="meta">
+        Who could fill it: ${escapeHTML(gap.ask)}
+      </p>
       ${sourceButtons(gap.sources)}
     </article>
   `).join("");
 }
 
 function renderEvidence(account) {
-  const files = (accountsData.files || []).filter((file) => String(file.account) === String(account.id));
+  const files = (accountsData.files || []).filter(
+    (file) => String(file.account) === String(account.id)
+  );
+
   $("evidenceLabel").textContent = `${files.length} files`;
 
   if (!files.length) {
-    $("evidenceList").innerHTML = `<div class="empty">No files stored for this account.</div>`;
+    $("evidenceList").innerHTML = `
+      <div class="empty">No files stored for this account.</div>
+    `;
     return;
   }
 
@@ -536,13 +867,21 @@ function renderEvidence(account) {
         <strong>${escapeHTML(file.title || file.id)}</strong>
         <span>${escapeHTML(file.id)}</span>
       </div>
-      <button class="source" type="button" data-source="${escapeHTML(file.id)}" data-file="1">Open</button>
+
+      <button
+        class="source"
+        type="button"
+        data-source="${escapeHTML(file.id)}"
+        data-file="1"
+      >Open</button>
     </div>
   `).join("");
 }
 
 function renderSignals() {
-  const signals = Array.isArray(signalsData) ? signalsData : signalsData?.signals || [];
+  const signals = Array.isArray(signalsData)
+    ? signalsData
+    : signalsData?.signals || [];
 
   if (!signals.length) {
     $("signalsList").innerHTML = `
@@ -555,13 +894,33 @@ function renderSignals() {
   }
 
   $("signalsList").innerHTML = signals.map((signal) => {
-    const title = signal.title || signal.name || signal.type || signal.kind || "Signal";
-    const description = signal.description || signal.text || signal.message || signal.summary || "";
+    const title =
+      signal.title ||
+      signal.name ||
+      signal.type ||
+      signal.kind ||
+      "Signal";
+
+    const description =
+      signal.description ||
+      signal.text ||
+      signal.message ||
+      signal.summary ||
+      "";
+
     return `
       <article class="card">
         <h3>${escapeHTML(title)}</h3>
-        <p>${escapeHTML(description || "No description field on this signal.")}</p>
-        ${sourceButtons([signal.id, signal.account].filter(Boolean))}
+
+        <p>
+          ${escapeHTML(
+            description || "No description field on this signal."
+          )}
+        </p>
+
+        ${sourceButtons(
+          [signal.id, signal.account].filter(Boolean)
+        )}
       </article>
     `;
   }).join("");
@@ -569,11 +928,16 @@ function renderSignals() {
 
 function renderNotes() {
   const notes = (notesData.notes || []).filter((note) => {
-    return !note.account || String(note.account) === selectedAccountId;
+    return (
+      !note.account ||
+      String(note.account) === String(selectedAccountId)
+    );
   });
 
   if (!notes.length) {
-    $("notesList").innerHTML = `<div class="empty">No notes written from this CRM yet.</div>`;
+    $("notesList").innerHTML = `
+      <div class="empty">No notes written from this CRM yet.</div>
+    `;
     return;
   }
 
@@ -583,6 +947,7 @@ function renderNotes() {
         <span class="pill">${escapeHTML(note.kind || "note")}</span>
         <span class="pill">${escapeHTML(note.account || "no account")}</span>
       </div>
+
       <h3>${escapeHTML(note.title || "Untitled note")}</h3>
       <p>${escapeHTML(note.text || "")}</p>
     </article>
@@ -590,17 +955,21 @@ function renderNotes() {
 }
 
 function renderAccount() {
+  // Always refresh tabs first, even if the selected account is missing.
+  renderAccountTabs();
+
   const account = getSelectedAccount();
 
   if (!account) {
-    $("accountSummary").textContent = "That account is not in the saved record.";
+    $("accountSummary").textContent =
+      "That account is not in the saved record.";
     return;
   }
 
-  renderAccountTabs();
-
   $("accountSummary").textContent =
-    `Recorded story, not a valuation: ${account.official_story || "No story on the record."}`;
+    `Recorded story, not a valuation: ${
+      account.official_story || "No story on the record."
+    }`;
 
   renderBrief(account);
   renderBook(account);
@@ -614,12 +983,17 @@ function renderAccount() {
 
 async function loadEvidence(id) {
   showView("evidence");
+
   $("evidenceTitle").textContent = id;
   $("evidenceViewer").textContent = `Loading ${id}…`;
 
   try {
-    const response = await fetch(`/api/evidence/${encodeURIComponent(id)}`);
+    const response = await fetch(
+      `/api/evidence/${encodeURIComponent(id)}`
+    );
+
     const text = await response.text();
+
     $("evidenceViewer").textContent = response.ok
       ? text
       : `Could not open ${id}. ${text}`;
@@ -630,57 +1004,95 @@ async function loadEvidence(id) {
 
 function showCite(id) {
   const account = getSelectedAccount();
+
   const fact = account && factById(account, id);
-  const person = account?.stakeholders?.find((item) => item.id === id);
-  const opportunity = account?.opportunities?.find((item) => item.id === id);
-  const offer = account?.offers?.find((item) => item.id === id);
+  const person = account?.stakeholders?.find(
+    (item) => item.id === id
+  );
+  const opportunity = account?.opportunities?.find(
+    (item) => item.id === id
+  );
+  const offer = account?.offers?.find(
+    (item) => item.id === id
+  );
+
   const bar = $("citeBar");
   bar.hidden = false;
 
   if (fact) {
-    bar.textContent = `${fact.id} · ${fact.status}${fact.verified_by ? ` · verified by ${fact.verified_by}` : ""} · ${fact.said_by || "speaker not named"}: ${fact.text}`;
+    bar.textContent =
+      `${fact.id} · ${fact.status}` +
+      `${fact.verified_by ? ` · verified by ${fact.verified_by}` : ""}` +
+      ` · ${fact.said_by || "speaker not named"}: ${fact.text}`;
     return;
   }
 
   if (person) {
-    bar.textContent = `${person.id} · ${person.name} · ${person.role} · relationship ${person.relationship}`;
+    bar.textContent =
+      `${person.id} · ${person.name} · ${person.role} · ` +
+      `relationship ${person.relationship}`;
     return;
   }
 
   if (opportunity) {
-    bar.textContent = `${opportunity.id} · ${opportunity.title} · worth_up_to ${money(opportunity.worth_up_to)} · blocker ${opportunity.blocker?.status || "unknown"}`;
+    bar.textContent =
+      `${opportunity.id} · ${opportunity.title} · ` +
+      `worth_up_to ${money(opportunity.worth_up_to)} · ` +
+      `blocker ${opportunity.blocker?.status || "unknown"}`;
     return;
   }
 
   if (offer) {
-    bar.textContent = `${offer.id} · ${offer.title} · value ${money(offer.value)} · pitch to ${offer.pitch_to || "nobody named"}`;
+    bar.textContent =
+      `${offer.id} · ${offer.title} · value ${money(offer.value)} · ` +
+      `pitch to ${offer.pitch_to || "nobody named"}`;
     return;
   }
 
-  bar.textContent = `${id} is cited here. It is not a fact, person, deal, or offer on this account.`;
+  bar.textContent =
+    `${id} is cited here. It is not a fact, person, deal, or offer on this account.`;
 }
 
 async function refreshSignals(silent) {
   if (checkingSignals) return;
+
   checkingSignals = true;
+
   const button = $("refreshBtn");
   button.disabled = true;
+
   $("liveStatus").textContent = "Checking signals…";
 
   try {
-    const response = await fetch("/api/signals/refresh", { method: "POST" });
+    const response = await fetch("/api/signals/refresh", {
+      method: "POST"
+    });
+
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Signal check failed");
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Signal check failed");
+    }
 
     signalsData = payload.data ?? payload;
+
     renderSignals();
-    const count = (Array.isArray(signalsData) ? signalsData : signalsData.signals || []).length;
+
+    const count = (
+      Array.isArray(signalsData)
+        ? signalsData
+        : signalsData.signals || []
+    ).length;
+
     $("liveStatus").textContent = count
       ? `${count} signal${count === 1 ? "" : "s"} in the latest check`
       : "Latest check returned no new signals";
   } catch (error) {
     $("liveStatus").textContent = error.message;
-    if (!silent) $("noteStatus").textContent = "";
+
+    if (!silent) {
+      $("noteStatus").textContent = "";
+    }
   } finally {
     checkingSignals = false;
     button.disabled = false;
@@ -688,75 +1100,130 @@ async function refreshSignals(silent) {
 }
 
 async function loadInitialData() {
-  const [accountsResponse, signalsResponse, notesResponse] = await Promise.all([
+  const [
+    accountsResponse,
+    signalsResponse,
+    notesResponse
+  ] = await Promise.all([
     fetch("/api/accounts"),
     fetch("/api/signals"),
     fetch("/api/notes")
   ]);
 
-  if (!accountsResponse.ok) throw new Error("Saved accounts could not be loaded");
+  if (!accountsResponse.ok) {
+    throw new Error("Saved accounts could not be loaded");
+  }
 
   accountsData = await accountsResponse.json();
-  signalsData = signalsResponse.ok ? await signalsResponse.json() : { signals: [] };
-  notesData = notesResponse.ok ? await notesResponse.json() : { notes: [] };
 
-  // Keep A selected if available; otherwise select the first account.
-  const accountExists = accountsData.accounts?.some(
-    account => String(account.id) === selectedAccountId
+  signalsData = signalsResponse.ok
+    ? await signalsResponse.json()
+    : { signals: [] };
+
+  notesData = notesResponse.ok
+    ? await notesResponse.json()
+    : { notes: [] };
+
+  if (!Array.isArray(accountsData.accounts)) {
+    throw new Error("The accounts API did not return an accounts list");
+  }
+
+  // Select A by default if it exists. Otherwise select the first account.
+  const accountExists = accountsData.accounts.some(
+    (account) => String(account.id) === String(selectedAccountId)
   );
 
-  if (!accountExists && accountsData.accounts?.length) {
+  if (!accountExists && accountsData.accounts.length) {
     selectedAccountId = String(accountsData.accounts[0].id);
   }
 
+  // Generate all account tabs and render the selected account.
+  renderAccountTabs();
   renderAccount();
+
   renderSignals();
   showView("brief");
+
+  console.log(
+    "AccountOS accounts loaded:",
+    accountsData.accounts.map((account) => ({
+      id: account.id,
+      name: account.name
+    }))
+  );
 }
 
+// Sidebar navigation.
 document.querySelector(".sidebar").addEventListener("click", (event) => {
   const button = event.target.closest("[data-view]");
+
   if (!button) return;
+
   showView(button.dataset.view);
 });
 
+// Main dashboard actions and evidence citations.
 document.querySelector(".main").addEventListener("click", (event) => {
   const open = event.target.closest("[data-open]");
+
   if (open) {
     showView(open.dataset.open);
     return;
   }
 
   const source = event.target.closest("[data-source]");
+
   if (!source) return;
-  if (source.dataset.file === "1") loadEvidence(source.dataset.source);
-  else showCite(source.dataset.source);
+
+  if (source.dataset.file === "1") {
+    loadEvidence(source.dataset.source);
+  } else {
+    showCite(source.dataset.source);
+  }
 });
 
-// UPDATED: Delegated listener works for dynamically generated account tabs.
+// Account tabs use event delegation because buttons are generated dynamically.
 $("accountTabs").addEventListener("click", (event) => {
   const button = event.target.closest(".account-tab");
 
   if (!button) return;
 
-  selectedAccountId = button.dataset.account;
+  const accountId = button.dataset.account;
+
+  if (!accountId) return;
+
+  selectedAccountId = String(accountId);
+
   $("citeBar").hidden = true;
+
+  renderAccountTabs();
   renderAccount();
+
+  // Keep the current dashboard section when switching accounts.
+  showView(currentView);
 });
 
-$("refreshBtn").addEventListener("click", () => refreshSignals(false));
+// Refresh live signals.
+$("refreshBtn").addEventListener("click", () => {
+  refreshSignals(false);
+});
 
+// Write a note to the selected account.
 $("noteForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+
   const form = event.currentTarget;
   const status = $("noteStatus");
   const data = new FormData(form);
+
   status.textContent = "Writing…";
 
   try {
     const response = await fetch("/api/notes", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json"
+      },
       body: JSON.stringify({
         account: selectedAccountId,
         kind: data.get("kind"),
@@ -766,20 +1233,33 @@ $("noteForm").addEventListener("submit", async (event) => {
     });
 
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Note was not saved");
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Note was not saved");
+    }
 
     notesData = payload;
+
     form.reset();
+
     status.textContent = "Note written back.";
+
     renderNotes();
   } catch (error) {
     status.textContent = error.message;
   }
 });
 
+// Load saved dashboard data.
 loadInitialData().catch((error) => {
   $("accountSummary").innerHTML =
     `<span class="error">${escapeHTML(error.message)}</span>`;
+
+  console.error("AccountOS loading error:", error);
 });
 
-signalTimer = window.setInterval(() => refreshSignals(true), 70000);
+// Refresh signals about once a minute while the page is open.
+signalTimer = window.setInterval(
+  () => refreshSignals(true),
+  70000
+);

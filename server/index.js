@@ -8,6 +8,7 @@ const path = require("path");
 dotenv.config();
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "../public")));
@@ -22,12 +23,15 @@ fs.mkdirSync(FILES_DIR, { recursive: true });
 
 let nextMcpCallAt = 0;
 
+// ---------------- MCP HELPER ----------------
+
 async function callTool(name, args = {}) {
   if (!process.env.AQ_TOKEN) {
     throw new Error("AQ_TOKEN is missing from .env");
   }
 
   const now = Date.now();
+
   if (now < nextMcpCallAt) {
     const seconds = Math.ceil((nextMcpCallAt - now) / 1000);
     throw new Error(`One MCP call a minute. Try again in ${seconds}s.`);
@@ -46,7 +50,10 @@ async function callTool(name, args = {}) {
       jsonrpc: "2.0",
       id: Date.now(),
       method: "tools/call",
-      params: { name, arguments: args },
+      params: {
+        name,
+        arguments: args,
+      },
     }),
   });
 
@@ -87,6 +94,8 @@ async function callTool(name, args = {}) {
   }
 }
 
+// ---------------- FILE HELPERS ----------------
+
 function readJSON(filename) {
   const file = path.join(DATA_DIR, filename);
 
@@ -104,17 +113,136 @@ function saveData(filename, data) {
   );
 }
 
-// Dashboard
+// ---------------- DASHBOARD ----------------
+
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "../public/index.html"));
 });
 
-// Health
+// ---------------- HEALTH ----------------
+
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok" });
+  res.json({
+    status: "ok",
+    message: "FlytBase CRM server is running",
+  });
 });
 
-// Local accounts
+// ---------------- MCP TOOL DISCOVERY ----------------
+
+app.get("/api/mcp/tools", async (req, res) => {
+  try {
+    if (!process.env.AQ_TOKEN) {
+      throw new Error("AQ_TOKEN is missing from .env");
+    }
+
+    const now = Date.now();
+
+    if (now < nextMcpCallAt) {
+      const seconds = Math.ceil((nextMcpCallAt - now) / 1000);
+
+      return res.status(429).json({
+        error: `Wait ${seconds}s before the next MCP call`,
+      });
+    }
+
+    nextMcpCallAt = now + 60_000;
+
+    const response = await fetch(MCP_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${process.env.AQ_TOKEN}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: Date.now(),
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    const raw = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`MCP HTTP ${response.status}: ${raw}`);
+    }
+
+    const payload = JSON.parse(raw);
+
+    if (payload.error) {
+      throw new Error(payload.error.message);
+    }
+
+    res.json({
+      tools: (payload.result?.tools || []).map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message,
+    });
+  }
+});
+
+// ---------------- MCP IDENTITY ----------------
+
+app.post("/api/mcp/whoami", async (req, res) => {
+  try {
+    const result = await callTool("whoami");
+
+    saveData("whoami.json", result);
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ---------------- FETCH THIRD ACCOUNT ----------------
+
+app.post("/api/mcp/new-account", async (req, res) => {
+  try {
+    const account = String(req.body?.account || "").trim();
+
+    if (account !== "K") {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid account. Expected K.",
+      });
+    }
+
+    const result = await callTool("get_new_account", {
+      account,
+    });
+
+    saveData("account_K.json", result);
+
+    res.json({
+      success: true,
+      account,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ---------------- LOCAL ACCOUNTS ----------------
+
 app.get("/api/accounts", (req, res) => {
   const accounts = readJSON("accounts.json");
 
@@ -127,7 +255,8 @@ app.get("/api/accounts", (req, res) => {
   res.json(accounts);
 });
 
-// Local signals
+// ---------------- LOCAL SIGNALS ----------------
+
 app.get("/api/signals", (req, res) => {
   const signals = readJSON("signals.json");
 
@@ -140,10 +269,12 @@ app.get("/api/signals", (req, res) => {
   res.json(signals);
 });
 
-// Fetch fresh signals from MCP
+// ---------------- REFRESH SIGNALS ----------------
+
 app.post("/api/signals/refresh", async (req, res) => {
   try {
     const signals = await callTool("get_signals");
+
     saveData("signals.json", signals);
 
     res.json({
@@ -158,28 +289,47 @@ app.post("/api/signals/refresh", async (req, res) => {
   }
 });
 
+// ---------------- NOTES ----------------
+
 app.get("/api/notes", (req, res) => {
-  res.json(readJSON("notes.json") || { notes: [] });
+  res.json(readJSON("notes.json") || {
+    notes: [],
+  });
 });
 
 app.post("/api/notes", async (req, res) => {
   try {
     const text = String(req.body?.text || "").trim();
-    const account = req.body?.account ? String(req.body.account) : undefined;
-    const kind = req.body?.kind ? String(req.body.kind) : undefined;
-    const title = req.body?.title ? String(req.body.title).trim() : undefined;
+
+    const account = req.body?.account
+      ? String(req.body.account)
+      : undefined;
+
+    const kind = req.body?.kind
+      ? String(req.body.kind)
+      : undefined;
+
+    const title = req.body?.title
+      ? String(req.body.title).trim()
+      : undefined;
 
     if (!text) {
-      return res.status(400).json({ error: "Note text is required" });
+      return res.status(400).json({
+        error: "Note text is required",
+      });
     }
 
     const args = { text };
+
     if (account) args.account = account;
     if (kind) args.kind = kind;
     if (title) args.title = title;
 
     const result = await callTool("write_note", args);
-    const store = readJSON("notes.json") || { notes: [] };
+
+    const store = readJSON("notes.json") || {
+      notes: [],
+    };
 
     store.notes.push({
       at: new Date().toISOString(),
@@ -187,19 +337,33 @@ app.post("/api/notes", async (req, res) => {
       kind: kind || "note",
       title: title || "",
       text,
-      result
+      result,
     });
 
     saveData("notes.json", store);
-    res.json(store);
+
+    res.json({
+      success: true,
+      data: store,
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 });
 
-// Read saved evidence files
+// ---------------- EVIDENCE FILES ----------------
+
 app.get("/api/evidence/:id", (req, res) => {
   const id = req.params.id;
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+    return res.status(400).json({
+      error: "Invalid evidence file ID",
+    });
+  }
 
   const accounts = readJSON("accounts.json");
 
@@ -225,6 +389,8 @@ app.get("/api/evidence/:id", (req, res) => {
     fs.readFileSync(file, "utf8")
   );
 });
+
+// ---------------- START SERVER ----------------
 
 const PORT = process.env.PORT || 3001;
 

@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -44,19 +45,9 @@
           <p class="eyebrow" id="viewKicker">ACCOUNT</p>
           <h1 id="viewTitle">Monday brief</h1>
         </div>
-       <div class="account-tabs" id="accountTabs">
-  <button class="account-tab active" type="button" data-account="A">
-    Eastern Counties Police Alliance
-  </button>
 
-  <button class="account-tab" type="button" data-account="B">
-    Aldermoor Industrial Group
-  </button>
-
-  <button class="account-tab" type="button" data-account="K">
-    Kestrel Estates
-  </button>
-</div>
+        <!-- Account buttons are generated dynamically by app.js -->
+        <div class="account-tabs" id="accountTabs"></div>
       </header>
 
       <p class="story" id="accountSummary">Loading the account record…</p>
@@ -76,6 +67,7 @@
 
       <section class="view" data-view="moves" id="view-moves" hidden>
         <div id="movesBody" class="stack"></div>
+
         <form class="panel note-form" id="noteForm">
           <div class="panel-heading">
             <div>
@@ -83,9 +75,16 @@
               <h2>Note on this account</h2>
             </div>
           </div>
+
           <p class="hint">Saved through the server with write_note. The token never reaches the browser.</p>
-          <label>Title <input name="title" type="text" maxlength="120" placeholder="Short label" /></label>
-          <label>Kind
+
+          <label>
+            Title
+            <input name="title" type="text" maxlength="120" placeholder="Short label" />
+          </label>
+
+          <label>
+            Kind
             <select name="kind">
               <option value="next_step">Next step</option>
               <option value="risk">Risk</option>
@@ -93,7 +92,12 @@
               <option value="note">Note</option>
             </select>
           </label>
-          <label>Text <textarea name="text" rows="3" required placeholder="What should be on the record"></textarea></label>
+
+          <label>
+            Text
+            <textarea name="text" rows="3" required placeholder="What should be on the record"></textarea>
+          </label>
+
           <button class="primary" type="submit">Write note</button>
           <p class="hint" id="noteStatus"></p>
           <div id="notesList" class="stack"></div>
@@ -119,6 +123,7 @@
           </div>
           <div id="evidenceList" class="evidence-list"></div>
         </div>
+
         <div class="panel">
           <div class="panel-heading">
             <div>
@@ -139,12 +144,14 @@
             </div>
             <button class="primary" type="button" id="refreshBtn">Check for signals</button>
           </div>
+
           <p class="hint">One call a minute. The page also checks on its own about once a minute while it is open.</p>
           <div id="signalsList" class="stack"></div>
         </div>
       </section>
     </main>
   </div>
+
   <script src="app.js"></script>
 </body>
 </html>

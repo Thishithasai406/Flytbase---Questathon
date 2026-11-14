@@ -116,7 +116,9 @@ function saveData(filename, data) {
 // ---------------- DASHBOARD DATA ----------------
 
 function getDashboardData() {
-  const base = readJSON("accounts.json");
+  // Prefer live Questathon data for A and B
+  const live = readJSON("accounts_live.json");
+  const base = live || readJSON("accounts.json");
 
   if (!base) {
     throw new Error("Account data not found");
@@ -137,7 +139,6 @@ function getDashboardData() {
     );
 
     if (kAccount) {
-      // Prevent duplicate K entries
       result.accounts = result.accounts.filter(
         account => String(account.id) !== "K"
       );
@@ -319,7 +320,7 @@ app.post("/api/mcp/new-account", async (req, res) => {
   }
 });
 
-// ---------------- LOCAL ACCOUNTS ----------------
+// ---------------- DASHBOARD ACCOUNTS ----------------
 
 app.get("/api/accounts", (req, res) => {
   try {
